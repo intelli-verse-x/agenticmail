@@ -2,7 +2,7 @@
   "name": "@agenticmail/mcp",
   "version": "0.9.29",
   "mcpName": "io.github.agenticmail/mcp",
-  "description": "MCP server for AgenticMail — give any AI client real email, SMS, and phone call-control capabilities",
+  "description": "MCP server for AgenticMail \u2014 give any AI client real email, SMS, and phone call-control capabilities",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,8 +22,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup --config tsup.config.ts",
-    "dev": "tsx src/index.ts",
+    "build": "node init && tsup --config tsup.config.ts",
+    "dev": "node init && tsx src/index.ts",
     "test": "vitest run --passWithNoTests",
     "prepublishOnly": "npm run build"
   },
@@ -36,7 +36,7 @@
     "tsup": "^8.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22"

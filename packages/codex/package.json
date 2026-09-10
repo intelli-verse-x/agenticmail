@@ -1,7 +1,7 @@
 {
   "name": "@agenticmail/codex",
   "version": "0.1.33",
-  "description": "OpenAI Codex CLI integration for AgenticMail — surfaces every AgenticMail agent as a native Codex subagent and wires the dispatcher daemon to the Codex SDK",
+  "description": "OpenAI Codex CLI integration for AgenticMail \u2014 surfaces every AgenticMail agent as a native Codex subagent and wires the dispatcher daemon to the Codex SDK",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -39,7 +39,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts src/install.ts src/uninstall.ts src/status.ts src/http-routes.ts src/dispatcher.ts src/dispatcher-bin.ts src/dispatcher-tuning.ts src/mail-hook.ts --format esm --dts --clean",
+    "build": "node init && tsup src/index.ts src/cli.ts src/install.ts src/uninstall.ts src/status.ts src/http-routes.ts src/dispatcher.ts src/dispatcher-bin.ts src/dispatcher-tuning.ts src/mail-hook.ts --format esm --dts --clean",
     "test": "vitest run --passWithNoTests",
     "preuninstall": "node scripts/uninstall.mjs",
     "prepublishOnly": "npm run build"
@@ -69,7 +69,7 @@
     "supertest": "^7.0.0",
     "tsup": "^8.4.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22"

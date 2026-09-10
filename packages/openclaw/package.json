@@ -1,7 +1,7 @@
 {
   "name": "@agenticmail/openclaw",
   "version": "0.5.72",
-  "description": "OpenClaw plugin for AgenticMail — email, SMS, and phone call-control for OpenClaw agents",
+  "description": "OpenClaw plugin for AgenticMail \u2014 email, SMS, and phone call-control for OpenClaw agents",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -28,7 +28,7 @@
     ]
   },
   "scripts": {
-    "build": "tsup index.ts --format esm,cjs --dts --clean",
+    "build": "node init && tsup index.ts --format esm,cjs --dts --clean",
     "test": "vitest run --passWithNoTests",
     "preuninstall": "node scripts/uninstall.mjs",
     "prepublishOnly": "npm run build"
@@ -39,7 +39,7 @@
   "devDependencies": {
     "tsup": "^8.4.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20"
