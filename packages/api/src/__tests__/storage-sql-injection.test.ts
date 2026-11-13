@@ -428,6 +428,24 @@ describe('sql-guard unit', () => {
     expect(analyzeRawSql('SELECT a FROM "agents"').identifiers).toContain('agents');
   });
 
+  it('rejects unsupported PostgreSQL Unicode escape introducers without changing spaced bitwise syntax', () => {
+    for (const sql of [
+      `SELECT U&"lo!005fget" UESCAPE '!'(?)`,
+      `SELECT public.u&"d!0062link_exec" UESCAPE '!'(?, ?)`,
+      `SELECT * FROM U&"p!0067_authid" UESCAPE '!'`,
+      `SELECT u&'lo!005fget' UESCAPE '!'`,
+      `SELECT U&"ordinary"`,
+    ]) {
+      expect(() => tokenizeSql(sql, 'postgres')).toThrow(/Unicode-escaped/);
+      expect(() => analyzeRawSql(sql, 'postgres')).toThrow(/Unicode-escaped/);
+    }
+    expect(tokenizeSql('SELECT U & "flags" FROM agt_example', 'postgres').map((token) => token.value))
+      .toEqual(['SELECT', 'U', '&', 'flags', 'FROM', 'agt_example']);
+    expect(analyzeRawSql('SELECT "ordinary", \'U&"text"\' FROM agt_example', 'postgres').kind).toBe('read');
+    expect(tokenizeSql('SELECT u&"flags" FROM agt_example', 'sqlite').map((token) => token.value))
+      .toEqual(['SELECT', 'u', '&', 'flags', 'FROM', 'agt_example']);
+  });
+
   it('quoted callable identifiers cannot bypass the raw SQL function policy', () => {
     const cases: Array<[string, string]> = [
       ['sqlite', 'SELECT "load_extension"(?)'],

@@ -45,37 +45,72 @@ export function pushEventToAgent(agentId: string, event: Record<string, unknown>
 const PENDING_EVENT_TTL_MS = 10 * 60_000;
 const MAX_PENDING_EVENTS_PER_AGENT = 50;
 const MAX_PENDING_AGENTS = 1_000;
-const pendingEvents = new Map<string, Array<{ event: Record<string, unknown>; expiresAt: number }>>();
+const MAX_PENDING_EVENT_BYTES = 64 * 1024;
+const MAX_PENDING_TOTAL_BYTES = 8 * 1024 * 1024;
+const pendingEvents = new Map<string, Array<{ event: Record<string, unknown>; expiresAt: number; bytes: number }>>();
+let pendingBytes = 0;
+
+function deletePending(agentId: string): void {
+  const queue = pendingEvents.get(agentId);
+  if (!queue) return;
+  pendingBytes -= queue.reduce((n, entry) => n + entry.bytes, 0);
+  pendingEvents.delete(agentId);
+}
 
 function prunePending(agentId: string, now = Date.now()): void {
   const queue = pendingEvents.get(agentId);
   if (!queue) return;
   const live = queue.filter((e) => e.expiresAt > now);
-  if (live.length === 0) pendingEvents.delete(agentId);
-  else if (live.length !== queue.length) pendingEvents.set(agentId, live);
+  if (live.length !== queue.length) {
+    deletePending(agentId);
+    if (live.length) {
+      pendingEvents.set(agentId, live);
+      pendingBytes += live.reduce((n, entry) => n + entry.bytes, 0);
+    }
+  }
 }
 
 /** Queue an event for ONE agent's next SSE connection (bounded, expiring). */
 export function queueEventForAgent(agentId: string, event: Record<string, unknown>): void {
   if (!agentId) return;
+  let serialized: string;
+  try { serialized = JSON.stringify(event); } catch { return; }
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_PENDING_EVENT_BYTES) {
+    // Tasks are persisted in the DB. Cache a bounded wake-up pointer, not
+    // a multi-megabyte task/schema copied from the 10MB request body.
+    if (event.type !== 'task' || typeof event.taskId !== 'string' || event.taskId.length > 200) return;
+    serialized = JSON.stringify({
+      type: 'task', taskId: event.taskId,
+      task: `You have a pending task (ID: ${event.taskId}). Check your pending tasks, claim it, process it, and submit the result.`,
+    });
+  }
+  const bytes = Buffer.byteLength(serialized, 'utf8');
+  const snapshot = JSON.parse(serialized) as Record<string, unknown>;
   const now = Date.now();
   prunePending(agentId, now);
   if (!pendingEvents.has(agentId) && pendingEvents.size >= MAX_PENDING_AGENTS) {
     // Evict the oldest agent's queue rather than grow without bound.
     const oldest = pendingEvents.keys().next().value;
-    if (oldest !== undefined) pendingEvents.delete(oldest);
+    if (oldest !== undefined) deletePending(oldest);
   }
   const queue = pendingEvents.get(agentId) ?? [];
-  queue.push({ event, expiresAt: now + PENDING_EVENT_TTL_MS });
-  if (queue.length > MAX_PENDING_EVENTS_PER_AGENT) queue.splice(0, queue.length - MAX_PENDING_EVENTS_PER_AGENT);
+  queue.push({ event: snapshot, expiresAt: now + PENDING_EVENT_TTL_MS, bytes });
+  pendingBytes += bytes;
+  while (queue.length > MAX_PENDING_EVENTS_PER_AGENT) pendingBytes -= queue.shift()!.bytes;
   pendingEvents.set(agentId, queue);
+  // Bound total retained serialized data across agents as well as counts.
+  while (pendingBytes > MAX_PENDING_TOTAL_BYTES) {
+    const oldest = pendingEvents.keys().next().value;
+    if (oldest === undefined) break;
+    deletePending(oldest);
+  }
 }
 
 /** Remove and return the still-live events queued for `agentId`. */
 export function takePendingEvents(agentId: string): Record<string, unknown>[] {
   prunePending(agentId);
   const queue = pendingEvents.get(agentId) ?? [];
-  pendingEvents.delete(agentId);
+  deletePending(agentId);
   return queue.map((e) => e.event);
 }
 
@@ -99,6 +134,7 @@ export async function closeAllWatchers(): Promise<void> {
   }
   activeWatchers.clear();
   pendingEvents.clear();
+  pendingBytes = 0;
 }
 
 export function createEventRoutes(accountManager: AccountManager, config: AgenticMailConfig, db?: import('@agenticmail/core').Database): Router {

@@ -18,7 +18,7 @@ vi.mock('@agenticmail/core', async (importOriginal) => {
 
 const { createTestDatabase } = await import('@agenticmail/core');
 const { createTaskRoutes } = await import('../routes/tasks.js');
-const { createEventRoutes, closeAllWatchers, takePendingEvents } = await import('../routes/events.js');
+const { createEventRoutes, closeAllWatchers, takePendingEvents, queueEventForAgent } = await import('../routes/events.js');
 
 const AGENTS: Record<string, any> = {
   alice: { id: 'alice', name: 'alice', email: 'alice@localhost', stalwartPrincipal: 'alice', metadata: {} },
@@ -146,5 +146,41 @@ describe('task event SSE isolation (GHSA-p76v-w436-9wjh)', () => {
     await waitFor(() => bobFrames.some((f) => f.type === 'task'));
     await new Promise((r) => setTimeout(r, 50));
     expect(aliceFrames.filter((f) => f.type === 'task')).toEqual([]);
+  });
+});
+
+
+describe('offline task event byte budgets', () => {
+  it('replaces an oversized task with a bounded assignee-only wake-up pointer', () => {
+    queueEventForAgent('alice', { type: 'task', taskId: 'a1', task: 'alice-small' });
+    queueEventForAgent('bob', { type: 'task', taskId: 'b1', task: 'PRIVATE-LARGE-MARKER'.repeat(4000) });
+    const bob = takePendingEvents('bob');
+    expect(bob).toHaveLength(1);
+    expect(bob[0].taskId).toBe('b1');
+    expect(bob[0].task).toContain('Check your pending tasks');
+    expect(JSON.stringify(bob)).not.toContain('PRIVATE-LARGE-MARKER');
+    expect(Buffer.byteLength(JSON.stringify(bob))).toBeLessThan(1024);
+    expect(takePendingEvents('alice')).toEqual([{ type: 'task', taskId: 'a1', task: 'alice-small' }]);
+  });
+
+  it('bounds retained serialized payload globally before the agent-count limit', () => {
+    for (let i = 0; i < 200; i++) queueEventForAgent(`agent-${i}`, { type: 'task', taskId: `${i}`, task: 'x'.repeat(60_000) });
+    const retained = Array.from({ length: 200 }, (_, i) => takePendingEvents(`agent-${i}`)).flat();
+    expect(retained.length).toBeGreaterThan(0);
+    expect(retained.length).toBeLessThan(200);
+    const total = retained.reduce((n, event) => n + Buffer.byteLength(JSON.stringify(event)), 0);
+    expect(total).toBeLessThanOrEqual(8 * 1024 * 1024);
+    // Draining restores the budget; later small tasks remain deliverable.
+    queueEventForAgent('later', { type: 'task', taskId: 'later', task: 'small' });
+    expect(takePendingEvents('later')).toHaveLength(1);
+  });
+
+  it('snapshots cached events and refuses oversized non-task payloads', () => {
+    const event = { type: 'task', taskId: 'stable', task: 'small' };
+    queueEventForAgent('bob', event);
+    event.task = 'mutated';
+    queueEventForAgent('other', { type: 'other', body: 'x'.repeat(70_000) });
+    expect(takePendingEvents('bob')[0].task).toBe('small');
+    expect(takePendingEvents('other')).toEqual([]);
   });
 });

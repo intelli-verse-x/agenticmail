@@ -96,6 +96,15 @@ export function tokenizeSql(sql: string, dialect = 'sqlite'): SqlToken[] {
       throw new SqlGuardError('SQL comments are not allowed');
     }
 
+    // PostgreSQL Unicode-escaped quoted names/literals may use a custom
+    // UESCAPE character, so a backslash check cannot normalize their value.
+    // Reject this unsupported introducer before tokenizing U, &, and quotes
+    // separately. Spaced bitwise expressions (`u & "flags"`) stay ordinary.
+    if (dialect === 'postgres' && (ch === 'U' || ch === 'u') && sql[i + 1] === '&'
+      && (sql[i + 2] === '"' || sql[i + 2] === "'")) {
+      throw new SqlGuardError('Unicode-escaped SQL text is not supported; use ordinary identifiers and bound parameters');
+    }
+
     if (ch === "'") {
       const value = readQuoted("'", true);
       if (!sqliteFamily && value.includes('\\')) {

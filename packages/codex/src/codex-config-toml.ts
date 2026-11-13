@@ -27,8 +27,8 @@
  *     can make Codex CLI refuse to start.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { dirname, isAbsolute, resolve, sep } from 'node:path';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import TOML from '@iarna/toml';
 
@@ -55,15 +55,63 @@ function safeConfigPath(path: string): string {
   if (!isAbsolute(path)) {
     throw new Error(`refusing relative codex config path: ${path}`);
   }
-  const resolved = resolve(path);
-  const home = resolve(homedir());
-  const tmp = resolve(tmpdir());
-  const insideHome = resolved === home || resolved.startsWith(home + sep);
-  const insideTmp  = resolved === tmp  || resolved.startsWith(tmp + sep);
-  if (!insideHome && !insideTmp) {
+  // Resolve existing ancestors as well as '..': a lexical HOME/tmp prefix
+  // alone does not contain a symlinked directory. Canonicalizing the roots
+  // also preserves trusted OS aliases such as macOS /tmp -> /private/tmp.
+  const canonical = (candidate: string): string => {
+    let cursor = resolve(candidate);
+    const suffix: string[] = [];
+    for (;;) {
+      try {
+        lstatSync(cursor); // includes dangling symlinks, which realpath rejects
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        const parent = dirname(cursor);
+        if (parent === cursor) throw err;
+        suffix.unshift(basename(cursor));
+        cursor = parent;
+      }
+    }
+    return resolve(realpathSync(cursor), ...suffix);
+  };
+  const resolved = canonical(path);
+  const roots = [canonical(homedir()), canonical(tmpdir())];
+  if (!roots.some(root => resolved === root || resolved.startsWith(root + sep))) {
     throw new Error(`refusing codex config write outside of HOME or tmp: ${path}`);
   }
   return resolved;
+}
+
+/**
+ * Write secrets through a fresh private file, then atomically replace. On
+ * POSIX the directory is 0700 and file 0600 BEFORE any bytes are written.
+ * Windows retains its inherited ACL model; numeric modes are not an ACL
+ * privacy guarantee. Never reuse a predictable adjacent temporary filename.
+ */
+function writePrivateAtomic(path: string, text: string): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const scratch = mkdtempSync(join(dir, '.agenticmail-write-'));
+  const temporary = join(scratch, 'config');
+  let fd: number | undefined;
+  try {
+    fd = openSync(temporary, 'wx', 0o600);
+    writeFileSync(fd, text, 'utf-8');
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    // Revalidate after parent creation and before publication. This is not
+    // a distributed lock against a malicious process with the same UID.
+    if (safeConfigPath(path) !== path) throw new Error('codex config path changed during write');
+    renameSync(temporary, path);
+  } finally {
+    try {
+      if (fd !== undefined) closeSync(fd);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
 }
 
 /** Shape of a single MCP server registration in Codex's config.toml. */
@@ -144,15 +192,11 @@ export function readCodexConfig(rawPath: string): CodexConfigShape {
  */
 export function writeCodexConfig(rawPath: string, config: CodexConfigShape): void {
   const path = safeConfigPath(rawPath);
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   // @iarna/toml's `stringify` accepts any JS object. We've already validated
   // the shape; the only failure mode is non-serialisable values (functions,
   // BigInt, etc.) which our shape can't carry.
   const text = TOML.stringify(config as TOML.JsonMap);
-  const tmp = `${path}.agenticmail-tmp`;
-  writeFileSync(tmp, text, 'utf-8');
-  renameSync(tmp, path);
+  writePrivateAtomic(path, text);
 }
 
 /** Insert (or replace) a single MCP server entry. Returns true if the file changed. */

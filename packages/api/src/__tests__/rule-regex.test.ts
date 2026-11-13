@@ -146,7 +146,7 @@ describe('POST /rules and evaluateRules', () => {
       'INSERT INTO email_rules (id, agent_id, name, priority, enabled, conditions, actions) VALUES (?, ?, ?, ?, ?, ?, ?)',
     );
     for (const [i, conditions] of [{ from_contains: 5 }, { subject_contains: {} }, [], 42].entries()) {
-      insert.run(`invalid-${i}`, 'agent-1', 'invalid', 100 - i, 1, JSON.stringify(conditions), JSON.stringify({ delete: true }));
+      insert.run(`invalid-${i}`, 'agent-1', `invalid-${i}`, 100 - i, 1, JSON.stringify(conditions), JSON.stringify({ delete: true }));
     }
     insert.run('valid', 'agent-1', 'valid', 0, 1, JSON.stringify({ subject_contains: 'hello' }), JSON.stringify({ mark_read: true }));
     expect(evaluateRules(db, 'agent-1', { subject: 'unrelated', from: [{ address: 'synthetic@localhost' }] })).toBeNull();
