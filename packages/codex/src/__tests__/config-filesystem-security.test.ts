@@ -4,12 +4,17 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 
 const roots = vi.hoisted(() => ({ home: '', tmp: '' }));
-const io = vi.hoisted(() => ({ failWrite: false, failRename: false, modesBeforeWrite: [] as number[] }));
+const io = vi.hoisted(() => ({ failWrite: false, failRename: false, modesBeforeWrite: [] as number[], scratchCalls: 0, writeCalls: 0 }));
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
   return {
     ...actual,
+    mkdtempSync: (...args: Parameters<typeof actual.mkdtempSync>) => {
+      io.scratchCalls++;
+      return actual.mkdtempSync(...args);
+    },
     writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      io.writeCalls++;
       if (typeof args[0] === 'number') {
         io.modesBeforeWrite.push(actual.fstatSync(args[0]).mode & 0o777);
         if (io.failWrite) throw new Error('synthetic write failure');
@@ -102,6 +107,8 @@ for (const writer of writers) {
       fs.mkdirSync(nested);
       const beforeBase = fs.readdirSync(base).sort();
       const beforeHome = fs.readdirSync(roots.home).sort();
+      const beforeScratchCalls = io.scratchCalls;
+      const beforeWriteCalls = io.writeCalls;
       for (const destination of [roots.home, roots.tmp, nested]) {
         expect(() => writer.write(destination)).toThrow(/path must be a file/);
       }
@@ -109,6 +116,8 @@ for (const writer of writers) {
       expect(fs.readdirSync(roots.home).sort()).toEqual(beforeHome);
       expect(fs.readdirSync(roots.tmp)).toEqual([]);
       expect(io.modesBeforeWrite).toEqual([]);
+      expect(io.scratchCalls).toBe(beforeScratchCalls);
+      expect(io.writeCalls).toBe(beforeWriteCalls);
     });
 
     it('does not touch the historical predictable temporary path', () => {
