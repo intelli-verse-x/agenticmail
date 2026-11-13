@@ -97,6 +97,20 @@ for (const writer of writers) {
       expect(fs.lstatSync(alias).isSymbolicLink()).toBe(true);
     });
 
+    it('rejects existing directories and trusted roots before creating any scratch artifact', () => {
+      const nested = join(roots.home, 'directory');
+      fs.mkdirSync(nested);
+      const beforeBase = fs.readdirSync(base).sort();
+      const beforeHome = fs.readdirSync(roots.home).sort();
+      for (const destination of [roots.home, roots.tmp, nested]) {
+        expect(() => writer.write(destination)).toThrow(/path must be a file/);
+      }
+      expect(fs.readdirSync(base).sort()).toEqual(beforeBase);
+      expect(fs.readdirSync(roots.home).sort()).toEqual(beforeHome);
+      expect(fs.readdirSync(roots.tmp)).toEqual([]);
+      expect(io.modesBeforeWrite).toEqual([]);
+    });
+
     it('does not touch the historical predictable temporary path', () => {
       const target = join(roots.home, writer.file);
       const oldTemporary = `${target}.agenticmail-tmp`;
