@@ -48,8 +48,8 @@
  * Stop). The same `mail-hook.ts` runs unchanged across both hosts.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 
 /**
@@ -58,20 +58,76 @@ import { homedir, tmpdir } from 'node:os';
  * helper in codex-config-toml.ts for the full rationale (CodeQL
  * `js/path-injection` boundary check).
  */
-function assertSafeHooksPath(path: string): void {
+function safeHooksPath(path: string): string {
   if (!path || typeof path !== 'string') {
     throw new Error('codex hooks path is required');
   }
   if (!isAbsolute(path)) {
     throw new Error(`refusing relative codex hooks path: ${path}`);
   }
-  const resolved = resolve(path);
-  const home = resolve(homedir());
-  const tmp = resolve(tmpdir());
-  const insideHome = resolved === home || resolved.startsWith(home + sep);
-  const insideTmp  = resolved === tmp  || resolved.startsWith(tmp + sep);
-  if (!insideHome && !insideTmp) {
+  // Resolve existing ancestors as well as '..': a lexical HOME/tmp prefix
+  // alone does not contain a symlinked directory. Canonicalizing the roots
+  // also preserves trusted OS aliases such as macOS /tmp -> /private/tmp.
+  const canonical = (candidate: string): string => {
+    let cursor = resolve(candidate);
+    const suffix: string[] = [];
+    for (;;) {
+      try {
+        lstatSync(cursor); // includes dangling symlinks, which realpath rejects
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        const parent = dirname(cursor);
+        if (parent === cursor) throw err;
+        suffix.unshift(basename(cursor));
+        cursor = parent;
+      }
+    }
+    return resolve(realpathSync(cursor), ...suffix);
+  };
+  const resolved = canonical(path);
+  const roots = [canonical(homedir()), canonical(tmpdir())];
+  if (!roots.some(root => resolved === root || resolved.startsWith(root + sep))) {
     throw new Error(`refusing codex hooks write outside of HOME or tmp: ${path}`);
+  }
+  // This helper accepts file destinations only. In particular HOME/tmp
+  // itself must not reach scratch creation in dirname(root).
+  try {
+    if (lstatSync(resolved).isDirectory()) throw new Error('codex hooks path must be a file');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  return resolved;
+}
+
+/**
+ * Write secrets through a fresh private file, then atomically replace. On
+ * POSIX the directory is 0700 and file 0600 BEFORE any bytes are written.
+ * Windows retains its inherited ACL model; numeric modes are not an ACL
+ * privacy guarantee. Never reuse a predictable adjacent temporary filename.
+ */
+function writePrivateAtomic(path: string, text: string): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const scratch = mkdtempSync(join(dir, '.agenticmail-write-'));
+  const temporary = join(scratch, 'config');
+  let fd: number | undefined;
+  try {
+    fd = openSync(temporary, 'wx', 0o600);
+    writeFileSync(fd, text, 'utf-8');
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    // Revalidate after parent creation and before publication. This is not
+    // a distributed lock against a malicious process with the same UID.
+    if (safeHooksPath(path) !== path) throw new Error('codex hooks path changed during write');
+    renameSync(temporary, path);
+  } finally {
+    try {
+      if (fd !== undefined) closeSync(fd);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }
 }
 
@@ -166,8 +222,8 @@ type HookEvent =
   | typeof HOOK_EVENTS_TO_REGISTER[number]
   | typeof HOOK_EVENTS_TO_REMOVE[number];
 
-function readHooks(path: string): CodexHooksShape {
-  assertSafeHooksPath(path);
+function readHooks(rawPath: string): CodexHooksShape {
+  const path = safeHooksPath(rawPath);
   if (!existsSync(path)) return {};
   const raw = readFileSync(path, 'utf-8');
   if (!raw.trim()) return {};
@@ -183,15 +239,10 @@ function readHooks(path: string): CodexHooksShape {
   }
 }
 
-function writeHooks(path: string, settings: CodexHooksShape): void {
-  assertSafeHooksPath(path);
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+function writeHooks(rawPath: string, settings: CodexHooksShape): void {
+  const path = safeHooksPath(rawPath);
   const text = JSON.stringify(settings, null, 2) + '\n';
-  const tmp = `${path}.agenticmail-tmp`;
-  writeFileSync(tmp, text, 'utf-8');
-  // Atomic POSIX rename → never leaves a half-written hooks file.
-  renameSync(tmp, path);
+  writePrivateAtomic(path, text);
 }
 
 /**
@@ -280,7 +331,8 @@ function upsertOneEvent(
  *
  * Returns `true` if the file changed.
  */
-export function removeMailHook(path: string): boolean {
+export function removeMailHook(rawPath: string): boolean {
+  const path = safeHooksPath(rawPath);
   if (!existsSync(path)) return false;
   const settings = readHooks(path);
   if (!settings.hooks) return false;
@@ -449,7 +501,8 @@ export function upsertOpenCraterHook(path: string): boolean {
 }
 
 /** Remove the OpenCrater sponsor hook (only our rules). Returns true if changed. */
-export function removeOpenCraterHook(path: string): boolean {
+export function removeOpenCraterHook(rawPath: string): boolean {
+  const path = safeHooksPath(rawPath);
   if (!existsSync(path)) return false;
   const settings = readHooks(path);
   if (!settings.hooks) return false;
