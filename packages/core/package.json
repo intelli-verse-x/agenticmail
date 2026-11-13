@@ -1,7 +1,7 @@
 {
   "name": "@agenticmail/core",
   "version": "0.9.43",
-  "description": "Core SDK for AgenticMail — email, SMS, and phone call-control for AI agents",
+  "description": "Core SDK for AgenticMail \u2014 email, SMS, and phone call-control for AI agents",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,8 +20,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup --config tsup.config.ts",
-    "dev": "tsup --config tsup.config.ts --watch",
+    "build": "node init && tsup --config tsup.config.ts",
+    "dev": "node init && tsup --config tsup.config.ts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build"
