@@ -1,0 +1,78 @@
+name: Fork sync validation
+
+on:
+  push:
+    branches: ['org-sync/upstream-*']
+  pull_request:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'packages/**'
+      - 'agenticmail/**'
+      - '.github/workflows/fork-sync-validation.yml'
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build-and-test:
+    if: github.repository == 'intelli-verse-x/agenticmail'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      stalwart:
+        image: stalwartlabs/stalwart:v0.15.5
+        ports:
+          - 8080:8080
+          - 587:587
+          - 143:143
+          - 25:25
+        env:
+          STALWART_ADMIN_USER: admin
+          STALWART_ADMIN_PASSWORD: testpassword
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Fence external SMTP delivery
+        env:
+          STALWART_CONTAINER: ${{ job.services.stalwart.id }}
+        run: |
+          set -euo pipefail
+          # Only the ephemeral localhost mail server is a permitted SMTP peer.
+          sudo iptables -I OUTPUT -p tcp -m multiport --dports 25,465,587 ! -d 127.0.0.0/8 -j REJECT
+          sudo ip6tables -I OUTPUT -p tcp -m multiport --dports 25,465,587 ! -d ::1/128 -j REJECT
+          # Published localhost ports are DNATed to this one ephemeral service.
+          service_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$STALWART_CONTAINER")"
+          [[ "$service_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          sudo iptables -I OUTPUT -d "$service_ip/32" -p tcp -m multiport --dports 25,465,587 -j ACCEPT
+          # Fence relay attempts made by the service container itself, too.
+          service_pid="$(docker inspect --format '{{.State.Pid}}' "$STALWART_CONTAINER")"
+          sudo nsenter --target "$service_pid" --net iptables -I OUTPUT -p tcp -m multiport --dports 25,465,587 -j REJECT
+          service_ipv6="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}' "$STALWART_CONTAINER")"
+          if [[ -n "$service_ipv6" ]]; then
+            sudo nsenter --target "$service_pid" --net ip6tables -I OUTPUT -p tcp -m multiport --dports 25,465,587 -j REJECT
+          fi
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build all packages
+        run: npm run build
+      - name: Run tests with ephemeral credentials only
+        run: npm test
+        env:
+          STALWART_ADMIN_USER: admin
+          STALWART_ADMIN_PASSWORD: testpassword
+          STALWART_URL: http://localhost:8080
+          AGENTICMAIL_MASTER_KEY: mk_test_key
+          SMTP_HOST: localhost
+          SMTP_PORT: 587
+          IMAP_HOST: localhost
+          IMAP_PORT: 143
