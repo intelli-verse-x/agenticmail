@@ -7,8 +7,6 @@ dist/
 *.tgz
 
 # Environment & secrets
-.env
-.env.local
 
 # SQLite databases
 *.db
@@ -22,7 +20,6 @@ Thumbs.db
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 
@@ -46,3 +43,4 @@ npm-debug.log*
 
 # Local dev scripts
 scripts/wipe-local.sh
+config.bat

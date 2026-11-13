@@ -1,7 +1,7 @@
 {
   "name": "@agenticmail/claudecode",
   "version": "0.2.40",
-  "description": "Claude Code integration for AgenticMail — surfaces every AgenticMail agent as a native Claude Code subagent so any Claude Code session can delegate to them with the Agent tool",
+  "description": "Claude Code integration for AgenticMail \u2014 surfaces every AgenticMail agent as a native Claude Code subagent so any Claude Code session can delegate to them with the Agent tool",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -41,7 +41,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts src/install.ts src/uninstall.ts src/status.ts src/http-routes.ts src/dispatcher.ts src/dispatcher-bin.ts src/dispatcher-tuning.ts src/mail-hook.ts --format esm --dts --clean",
+    "build": "node init && tsup src/index.ts src/cli.ts src/install.ts src/uninstall.ts src/status.ts src/http-routes.ts src/dispatcher.ts src/dispatcher-bin.ts src/dispatcher-tuning.ts src/mail-hook.ts --format esm --dts --clean",
     "test": "vitest run --passWithNoTests",
     "preuninstall": "node scripts/uninstall.mjs",
     "prepublishOnly": "npm run build"

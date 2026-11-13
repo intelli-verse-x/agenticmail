@@ -80,6 +80,13 @@ function safeConfigPath(path: string): string {
   if (!roots.some(root => resolved === root || resolved.startsWith(root + sep))) {
     throw new Error(`refusing codex config write outside of HOME or tmp: ${path}`);
   }
+  // This helper accepts file destinations only. In particular HOME/tmp
+  // itself must not reach scratch creation in dirname(root).
+  try {
+    if (lstatSync(resolved).isDirectory()) throw new Error('codex config path must be a file');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
   return resolved;
 }
 
